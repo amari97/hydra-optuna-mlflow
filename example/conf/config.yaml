@@ -1,0 +1,21 @@
+defaults:
+  - override /hydra/sweeper: mlflow_optuna
+x: 0.0
+y: 1.0
+run_name: quadratic-example
+experiment_path: quadratic-example
+use_mlflow: false
+trainer:
+  logger:
+    tracking_uri: null
+    experiment_name: quadratic-example
+hydra:
+  sweeper:
+    optuna_config:
+      direction: minimize
+      n_trials: 20
+      n_jobs: 2
+      study_name: quadratic
+      storage: null
+      append_config_hash: false
+      restart_mode: resume
