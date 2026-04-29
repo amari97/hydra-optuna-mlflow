@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hydra-optuna-mlflow-sweeper"
+version = "0.1.0"
+description = "Hydra Optuna sweeper with MLflow parent-run logging"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+  "hydra-core>=1.3",
+  "optuna>=3.0",
+  "mlflow>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=4.2.0",
+    "pytest>=8.3.5",
+    "ruff>=0.11.2",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+extend-include = ["*.ipynb"]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+extend-select = [
+    "W605",   # pycodestyle: invalid-escape-sequence
+    "S102",   # flake8-bandit: exec-builtin
+    "INP",    # flake8-no-pep420
+    "PYI",    # flake8-pyi
+    "PT",     # flake8-pytest-style
+    "PGH",    # pygrep-hooks
+    "PL",     # Pylint
+    "NPY",    # NumPy-specific rules
+    "RUF",    # Ruff-specific rules
+]
+ignore = [
+    "NPY002", # numpy-legacy-random
+    "PLR0911", # too-many-branches
+    "PLW0108", # unnecessary-lambda
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**" = ["INP001", "PLR2004"]
+"[!t][!e][!s][!t][!s]*/**" = ["PT"]
+
+[tool.ruff.lint.pylint]
+max-args = 10
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]

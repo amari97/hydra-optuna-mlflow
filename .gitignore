@@ -1,0 +1,17 @@
+# Python cache
+*.pyc
+.ipynb_checkpoints/
+*.egg-info/
+
+# IDE settings
+.vscode/
+.idea/
+.agents/*
+
+# OSX-specific
+.DS_Store
+
+# Ignore data, logs, etc.
+/logs/
+/multirun/
+*.code-workspace
