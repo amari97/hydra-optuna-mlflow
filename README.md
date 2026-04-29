@@ -45,6 +45,9 @@ The sweeper injects these runtime overrides for each trial:
 
 Your training code can use these values to attach nested runs to the study parent run.
 
+`mlflow_study_run_name` controls the top-level study run name created by the sweeper.
+When set, that explicit value is used instead of the resolved study name.
+
 ## Recommended Config Example
 
 Below is a production-style example adapted from your config:
@@ -115,6 +118,36 @@ A minimal runnable example is provided in example/.
 ```bash
 python example/quadratic.py -m 'x=interval(-5.0, 5.0)' 'y=interval(0.0, 10.0)'
 ```
+
+## Train-Side MLflow Run Setup
+
+In trial jobs (for example `train.py`), consume `mlflow_parent_run_id` injected by the sweeper
+to attach each training run under the study run:
+
+```python
+from omegaconf import DictConfig
+import mlflow
+
+
+def _start_mlflow_run(cfg: DictConfig):
+  """Start an MLflow run using config values and enable autologging."""
+  logger_cfg = cfg.trainer.logger
+  tracking_uri = logger_cfg.tracking_uri
+  experiment_name = cfg.experiment_path
+  run_name = cfg.get("run_name")
+  parent_run_id = cfg.get("mlflow_parent_run_id")
+
+  mlflow.set_tracking_uri(tracking_uri)
+  mlflow.set_experiment(experiment_name)
+
+  start_run_kwargs = {"run_name": run_name}
+  if parent_run_id:
+    start_run_kwargs["parent_run_id"] = parent_run_id
+  return mlflow.start_run(**start_run_kwargs)
+```
+
+With `restart_mode: resume`, rerunning the same sweep command with the same
+`study_name` and storage backend continues the existing Optuna study.
 
 ## Contributing
 
