@@ -36,6 +36,7 @@ Set the sweeper in your Hydra config:
 ```yaml
 defaults:
   - override /hydra/sweeper: mlflow_optuna
+  - override /hydra/launcher: joblib
 ```
 
 The sweeper injects these runtime overrides for each trial:
@@ -47,6 +48,47 @@ Your training code can use these values to attach nested runs to the study paren
 
 `mlflow_study_run_name` controls the top-level study run name created by the sweeper.
 When set, that explicit value is used instead of the resolved study name.
+
+Parallel trial execution can be controlled through Hydra's joblib launcher by linking
+launcher workers:
+
+```yaml
+hydra:
+  launcher:
+    n_jobs: 4
+```
+
+You can also force a dedicated file-only logger for each trial subjob:
+
+```yaml
+hydra:
+  sweeper:
+    optuna_config:
+      subjob_job_logging: file_only
+```
+
+This injects `hydra/job_logging=file_only` into each trial job.
+
+Example logging config file:
+
+Create `config/hydra/job_logging/file_only.yaml` with:
+
+```yaml
+version: 1
+formatters:
+  simple:
+    format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+handlers:
+  file:
+    class: logging.FileHandler
+    formatter: simple
+    # written to the Hydra run output directory alongside other run artifacts
+    filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+root:
+  level: INFO
+  handlers: [file]
+disable_existing_loggers: false
+```
 
 ## Recommended Config Example
 
@@ -82,9 +124,6 @@ hydra:
 
       # Top-level MLflow run name (defaults to study_name when null)
       mlflow_study_run_name: null
-
-      # Set n_jobs > 1 only when your hardware can safely parallelize trials
-      n_jobs: 1
       direction: minimize
       n_trials: 50
 

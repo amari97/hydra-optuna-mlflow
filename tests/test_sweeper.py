@@ -207,6 +207,26 @@ class TestMLflowOptunaSweeper:
         assert "+mlflow_parent_run_id=parent-123" in overrides
         assert "+optuna_trial_number=7" in overrides
 
+    def test_build_trial_overrides_injects_subjob_logging_override(self):
+        """Optional subjob logging config should be forwarded to each trial."""
+        sweeper = MLflowOptunaSweeper(OptunaConfig(subjob_job_logging="file_only"))
+        trial = SimpleNamespace(number=2, params={"lr": 0.02})
+
+        overrides = sweeper._build_trial_overrides(
+            trial=trial,
+            fixed_overrides=[],
+            study_run_id=None,
+        )
+
+        assert "hydra/job_logging=file_only" in overrides
+
+    def test_effective_n_jobs_from_launcher_interpolation(self):
+        """n_jobs is sourced from hydra.launcher.n_jobs."""
+        sweeper = MLflowOptunaSweeper(OptunaConfig())
+        sweeper.config = OmegaConf.create({"hydra": {"launcher": {"n_jobs": 3}}})
+
+        assert sweeper._effective_n_jobs() == 3
+
     def test_sweep_resume_reuses_study_name(self):
         """resume mode should call Optuna with stable study name + load_if_exists."""
         config = OptunaConfig(
@@ -228,3 +248,32 @@ class TestMLflowOptunaSweeper:
         create_study.assert_called_once()
         assert create_study.call_args.kwargs["study_name"] == "resume_study"
         assert create_study.call_args.kwargs["load_if_exists"] is True
+
+    def test_parallel_jobs_require_persistent_storage(self):
+        """n_jobs > 1 must use RDB/Journal-backed storage."""
+        sweeper = MLflowOptunaSweeper(OptunaConfig(storage=None, n_trials=0))
+        sweeper.config = OmegaConf.create({"hydra": {"launcher": {"n_jobs": 2}}})
+
+        with pytest.raises(ValueError, match="Parallel execution requires persistent"):
+            sweeper.sweep(arguments=[])
+
+    def test_parallel_jobs_accept_sqlite_storage(self):
+        """RDB URL storage should be accepted when n_jobs > 1."""
+        config = OptunaConfig(
+            storage="sqlite:///tmp_parallel_optuna.db",
+            study_name="parallel_study",
+            restart_mode="resume",
+            append_config_hash=False,
+            load_if_exists=True,
+            n_trials=0,
+        )
+        sweeper = MLflowOptunaSweeper(config)
+        sweeper.config = OmegaConf.create({"hydra": {"launcher": {"n_jobs": 2}}})
+        sweeper.sampler = None
+
+        with patch(
+            "hydra_plugins.hydra_optuna_sweeper.mlflow_optuna_sweeper.optuna.create_study"
+        ) as create_study:
+            sweeper.sweep(arguments=[])
+
+        create_study.assert_called_once()

@@ -40,11 +40,13 @@ class OptunaConfig:
     restart_mode: str = "resume"
     direction: str = "minimize"
     n_trials: int = 20
-    n_jobs: int = 1
     sampler: Any = None
     params: Dict[str, Any] = field(default_factory=dict)
     # Name for top-level MLflow study run; defaults to study_name if not set.
     mlflow_study_run_name: Optional[str] = None
+    # Optional Hydra job logging config injected into each trial job.
+    # Example: "file_only" -> hydra/job_logging=file_only
+    subjob_job_logging: Optional[str] = None
 
 
 @dataclass
@@ -59,5 +61,27 @@ ConfigStore.instance().store(
     group="hydra/sweeper",
     name="mlflow_optuna",
     node=MLflowOptunaSweeperConf,
+    provider="mlflow_optuna_sweeper",
+)
+
+
+ConfigStore.instance().store(
+    group="hydra/job_logging",
+    name="file_only",
+    node={
+        "version": 1,
+        "formatters": {
+            "simple": {"format": "[%(asctime)s][%(name)s][%(levelname)s] - %(message)s"}
+        },
+        "handlers": {
+            "file": {
+                "class": "logging.FileHandler",
+                "formatter": "simple",
+                "filename": "${hydra.runtime.output_dir}/${hydra.job.name}.log",
+            }
+        },
+        "root": {"level": "INFO", "handlers": ["file"]},
+        "disable_existing_loggers": False,
+    },
     provider="mlflow_optuna_sweeper",
 )

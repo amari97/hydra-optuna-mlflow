@@ -28,7 +28,6 @@ def test_optuna_config_core_defaults():
 
     assert config.direction == "minimize"
     assert config.n_trials == 20
-    assert config.n_jobs == 1
     assert config.restart_mode == "resume"
     assert config.append_config_hash is True
 

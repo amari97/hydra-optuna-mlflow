@@ -42,6 +42,8 @@ from omegaconf import OmegaConf
 from optuna.distributions import CategoricalDistribution
 from optuna.distributions import FloatDistribution
 from optuna.distributions import IntDistribution
+from optuna.storages import JournalStorage
+from optuna.storages import RDBStorage
 
 from .config import OptunaConfig
 
@@ -342,12 +344,56 @@ class MLflowOptunaSweeper(Sweeper):
             f"{name}={val}" for name, val in trial.params.items()
         )
         trial_overrides += tuple(fixed_overrides)
+        if self.optuna_config.subjob_job_logging:
+            trial_overrides += (
+                f"hydra/job_logging={self.optuna_config.subjob_job_logging}",
+            )
         if study_run_id is not None:
             trial_overrides += (
                 f"+mlflow_parent_run_id={study_run_id}",
                 f"+optuna_trial_number={trial.number}",
             )
         return trial_overrides
+
+    def _effective_n_jobs(self) -> int:
+        """Resolve parallel worker count from hydra.launcher.n_jobs."""
+        launcher_n_jobs = OmegaConf.select(
+            self.config, "hydra.launcher.n_jobs", default=1
+        )
+        try:
+            return max(1, int(launcher_n_jobs))
+        except (TypeError, ValueError):
+            return 1
+
+    def _validate_parallel_storage(self, n_jobs: int) -> None:
+        """Require persistent Optuna storage when running trials in parallel."""
+        if n_jobs <= 1:
+            return
+
+        storage = self.optuna_config.storage
+
+        if isinstance(storage, (RDBStorage, JournalStorage)):
+            return
+
+        if isinstance(storage, str):
+            # String-based RDB URL configs are converted by Optuna into RDBStorage.
+            if storage.startswith(
+                (
+                    "sqlite://",
+                    "mysql://",
+                    "postgresql://",
+                    "postgresql+",
+                    "oracle://",
+                    "mariadb://",
+                )
+            ):
+                return
+
+        raise ValueError(
+            "Parallel execution requires persistent Optuna storage. "
+            "When hydra.launcher.n_jobs > 1, set optuna_config.storage to an "
+            "RDB URL (e.g. sqlite:///...) or use JournalStorage."
+        )
 
     def _report_trial_result(
         self,
@@ -391,6 +437,9 @@ class MLflowOptunaSweeper(Sweeper):
                 "a new random study name each run."
             )
 
+        n_jobs = self._effective_n_jobs()
+        self._validate_parallel_storage(n_jobs)
+
         study = optuna.create_study(
             study_name=self._resolved_study_name,
             storage=self.optuna_config.storage,
@@ -405,7 +454,7 @@ class MLflowOptunaSweeper(Sweeper):
         sweep_status = "FINISHED"
         try:
             while n_trials_remaining > 0:
-                batch_size = min(n_trials_remaining, self.optuna_config.n_jobs)
+                batch_size = min(n_trials_remaining, n_jobs)
                 trials = [study.ask(search_space) for _ in range(batch_size)]
                 overrides_batch = [
                     self._build_trial_overrides(
