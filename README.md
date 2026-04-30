@@ -71,7 +71,7 @@ This injects `hydra/job_logging=file_only` into each trial job.
 
 Example logging config file:
 
-Create `config/hydra/job_logging/file_only.yaml` with:
+The file `file_only` implements a simple file logger that writes to the Hydra run output directory, namely,
 
 ```yaml
 version: 1
