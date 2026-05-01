@@ -37,6 +37,7 @@ from hydra.core.override_parser.types import Override
 from hydra.core.override_parser.types import Transformer
 from hydra.core.plugins import Plugins
 from hydra.plugins.sweeper import Sweeper
+from mlflow.entities import ViewType
 from omegaconf import DictConfig
 from omegaconf import OmegaConf
 from optuna.distributions import CategoricalDistribution
@@ -274,6 +275,7 @@ class MLflowOptunaSweeper(Sweeper):
                 f"tags.`{MLFLOW_RUN_KIND_TAG}` = '{MLFLOW_STUDY_RUN_KIND}' "
                 f"and tags.`{MLFLOW_STUDY_NAME_TAG}` = '{self._resolved_study_name}'"
             ),
+            run_view_type=ViewType.ACTIVE_ONLY,
             order_by=["attributes.start_time DESC"],
             max_results=1,
         )
@@ -359,7 +361,8 @@ class MLflowOptunaSweeper(Sweeper):
             # Find the best trial's direct child run via the optuna.trial_number tag
             all_runs = client.search_runs(
                 experiment_ids=[experiment_id],
-                max_results=self.optuna_config.n_trials * 4,
+                run_view_type=ViewType.ACTIVE_ONLY,
+                max_results=len(study.trials) * 4 or 1,
             )
             best_child = next(
                 (
@@ -454,6 +457,57 @@ class MLflowOptunaSweeper(Sweeper):
 
         study.tell(trial, float(return_value))
 
+    def _run_trials(
+        self,
+        study: optuna.Study,
+        search_space: Dict[str, Any],
+        fixed_overrides: List[str],
+        study_run_id: Optional[str],
+        experiment_id: Optional[str],
+        n_jobs: int,
+        n_trials_remaining: int,
+    ) -> None:
+        """Run the batched trial loop and finalise the MLflow study run."""
+        sweep_status = "FINISHED"
+        try:
+            while n_trials_remaining > 0:
+                batch_size = min(n_trials_remaining, n_jobs)
+                trials = [study.ask(search_space) for _ in range(batch_size)]
+                overrides_batch = [
+                    self._build_trial_overrides(
+                        trial=trial,
+                        fixed_overrides=fixed_overrides,
+                        study_run_id=study_run_id,
+                    )
+                    for trial in trials
+                ]
+
+                job_returns = self.launcher.launch(
+                    overrides_batch, initial_job_idx=trials[0].number
+                )
+
+                for trial, ret in zip(trials, job_returns):
+                    self._report_trial_result(
+                        study=study,
+                        trial=trial,
+                        return_value=ret.return_value,
+                    )
+
+                n_trials_remaining -= batch_size
+
+            if study_run_id is not None:
+                self._log_best_trial_to_mlflow(study, study_run_id, experiment_id)
+
+        except Exception:
+            sweep_status = "FAILED"
+            raise
+        finally:
+            if study_run_id is not None:
+                client = mlflow.tracking.MlflowClient()
+                run_info = client.get_run(study_run_id)
+                if run_info.info.status == "RUNNING":
+                    client.set_terminated(study_run_id, sweep_status)
+
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
@@ -495,46 +549,27 @@ class MLflowOptunaSweeper(Sweeper):
 
         study_run_id, experiment_id = self._create_mlflow_study_run()
 
-        n_trials_remaining = self.optuna_config.n_trials
-        sweep_status = "FINISHED"
-        try:
-            while n_trials_remaining > 0:
-                batch_size = min(n_trials_remaining, n_jobs)
-                trials = [study.ask(search_space) for _ in range(batch_size)]
-                overrides_batch = [
-                    self._build_trial_overrides(
-                        trial=trial,
-                        fixed_overrides=fixed_overrides,
-                        study_run_id=study_run_id,
-                    )
-                    for trial in trials
-                ]
+        completed = len(
+            [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+        )
+        n_trials_remaining = max(0, self.optuna_config.n_trials - completed)
+        if completed > 0:
+            log.info(
+                "Resuming study: %d/%d trials already completed, %d remaining.",
+                completed,
+                self.optuna_config.n_trials,
+                n_trials_remaining,
+            )
 
-                job_returns = self.launcher.launch(
-                    overrides_batch, initial_job_idx=trials[0].number
-                )
-
-                for trial, ret in zip(trials, job_returns):
-                    self._report_trial_result(
-                        study=study,
-                        trial=trial,
-                        return_value=ret.return_value,
-                    )
-
-                n_trials_remaining -= batch_size
-
-            if study_run_id is not None:
-                self._log_best_trial_to_mlflow(study, study_run_id, experiment_id)
-
-        except Exception:
-            sweep_status = "FAILED"
-            raise
-        finally:
-            if study_run_id is not None:
-                client = mlflow.tracking.MlflowClient()
-                run_info = client.get_run(study_run_id)
-                if run_info.info.status == "RUNNING":
-                    client.set_terminated(study_run_id, sweep_status)
+        self._run_trials(
+            study=study,
+            search_space=search_space,
+            fixed_overrides=fixed_overrides,
+            study_run_id=study_run_id,
+            experiment_id=experiment_id,
+            n_jobs=n_jobs,
+            n_trials_remaining=n_trials_remaining,
+        )
 
         try:
             best_trial = study.best_trial
