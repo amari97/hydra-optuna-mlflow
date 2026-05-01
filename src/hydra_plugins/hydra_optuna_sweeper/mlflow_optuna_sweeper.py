@@ -49,6 +49,10 @@ from .config import OptunaConfig
 
 log = logging.getLogger(__name__)
 
+MLFLOW_STUDY_NAME_TAG = "hydra_optuna_sweeper.study_name"
+MLFLOW_RUN_KIND_TAG = "hydra_optuna_sweeper.run_kind"
+MLFLOW_STUDY_RUN_KIND = "study"
+
 
 # ---------------------------------------------------------------------------
 # Distribution factory
@@ -245,6 +249,39 @@ class MLflowOptunaSweeper(Sweeper):
 
         return search_space, fixed_overrides
 
+    def _mlflow_study_run_tags(self) -> Dict[str, str]:
+        """Build stable tags used to identify the MLflow study run."""
+        return {
+            MLFLOW_RUN_KIND_TAG: MLFLOW_STUDY_RUN_KIND,
+            MLFLOW_STUDY_NAME_TAG: self._resolved_study_name or "",
+            "mlflow.note.content": f"Optuna study: {self._resolved_study_name or ''}",
+        }
+
+    def _find_existing_mlflow_study_run(
+        self,
+        client: mlflow.tracking.MlflowClient,
+        experiment_id: str,
+    ) -> Optional[str]:
+        """Reuse an existing MLflow study run when restart_mode=resume."""
+        if self.optuna_config.restart_mode != "resume":
+            return None
+        if not self._resolved_study_name:
+            return None
+
+        runs = client.search_runs(
+            experiment_ids=[experiment_id],
+            filter_string=(
+                f"tags.`{MLFLOW_RUN_KIND_TAG}` = '{MLFLOW_STUDY_RUN_KIND}' "
+                f"and tags.`{MLFLOW_STUDY_NAME_TAG}` = '{self._resolved_study_name}'"
+            ),
+            order_by=["attributes.start_time DESC"],
+            max_results=1,
+        )
+        if runs:
+            return runs[0].info.run_id
+
+        return None
+
     def _create_mlflow_study_run(self) -> tuple[Optional[str], Optional[str]]:
         """Create the top-level MLflow study run.
 
@@ -280,12 +317,20 @@ class MLflowOptunaSweeper(Sweeper):
         client = mlflow.tracking.MlflowClient()
         experiment = client.get_experiment_by_name(experiment_name)
         experiment_id = experiment.experiment_id
+
+        existing_run_id = self._find_existing_mlflow_study_run(client, experiment_id)
+        if existing_run_id is not None:
+            log.info(
+                "Reusing MLflow study run '%s' (run_id=%s)",
+                study_run_name,
+                existing_run_id,
+            )
+            return existing_run_id, experiment_id
+
         study_run = client.create_run(
             experiment_id=experiment_id,
             run_name=study_run_name,
-            tags={
-                "mlflow.note.content": f"Optuna study: {self._resolved_study_name or ''}"
-            },
+            tags=self._mlflow_study_run_tags(),
         )
         study_run_id = study_run.info.run_id
         log.info(

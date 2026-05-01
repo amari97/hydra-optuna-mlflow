@@ -11,7 +11,7 @@ In addition to Optuna-based sweeping, this package adds:
 
 - MLflow study and trial hierarchy logging, including parent run propagation to trial jobs.
 - Restart behavior for persistent studies with restart_mode:
-  - resume: continue an existing study in the same storage.
+  - resume: continue an existing Optuna study and reuse the matching MLflow study run.
   - fresh: create a new timestamped study name while keeping the same storage backend.
 - Support for persistent SQLite Optuna storage (for example, sqlite:///logs/optuna/mlp_search.db).
 
@@ -48,6 +48,8 @@ Your training code can use these values to attach nested runs to the study paren
 
 `mlflow_study_run_name` controls the top-level study run name created by the sweeper.
 When set, that explicit value is used instead of the resolved study name.
+In `restart_mode: resume`, the sweeper reuses the latest matching MLflow study run for the
+resolved Optuna study name instead of creating a new one.
 
 Parallel trial execution can be controlled through Hydra's joblib launcher by linking
 launcher workers:
@@ -186,7 +188,8 @@ def _start_mlflow_run(cfg: DictConfig):
 ```
 
 With `restart_mode: resume`, rerunning the same sweep command with the same
-`study_name` and storage backend continues the existing Optuna study.
+`study_name` and storage backend continues the existing Optuna study and reuses
+the matching MLflow study run.
 
 ## Contributing
 

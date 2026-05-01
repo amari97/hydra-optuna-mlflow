@@ -168,6 +168,7 @@ class TestMLflowOptunaSweeper:
         mock_client.get_experiment_by_name.return_value = SimpleNamespace(
             experiment_id="123"
         )
+        mock_client.search_runs.return_value = []
         mock_client.create_run.return_value = SimpleNamespace(
             info=SimpleNamespace(run_id="run-abc")
         )
@@ -190,6 +191,47 @@ class TestMLflowOptunaSweeper:
         assert experiment_id == "123"
         mock_client.create_run.assert_called_once()
         assert mock_client.create_run.call_args.kwargs["run_name"] == "my-study-run"
+        assert (
+            mock_client.create_run.call_args.kwargs["tags"][
+                "hydra_optuna_sweeper.study_name"
+            ]
+            == "resolved_study"
+        )
+
+    def test_create_mlflow_study_run_resume_reuses_existing_run(
+        self, mlflow_enabled_cfg
+    ):
+        """resume mode should reuse an existing MLflow study run instead of creating one."""
+        config = OptunaConfig(restart_mode="resume")
+        sweeper = MLflowOptunaSweeper(config)
+        sweeper._resolved_study_name = "resolved_study"
+        sweeper.config = mlflow_enabled_cfg
+
+        mock_client = Mock()
+        mock_client.get_experiment_by_name.return_value = SimpleNamespace(
+            experiment_id="123"
+        )
+        mock_client.search_runs.return_value = [
+            SimpleNamespace(info=SimpleNamespace(run_id="existing-run"))
+        ]
+
+        with (
+            patch(
+                "hydra_plugins.hydra_optuna_sweeper.mlflow_optuna_sweeper.mlflow.set_tracking_uri"
+            ),
+            patch(
+                "hydra_plugins.hydra_optuna_sweeper.mlflow_optuna_sweeper.mlflow.set_experiment"
+            ),
+            patch(
+                "hydra_plugins.hydra_optuna_sweeper.mlflow_optuna_sweeper.mlflow.tracking.MlflowClient",
+                return_value=mock_client,
+            ),
+        ):
+            run_id, experiment_id = sweeper._create_mlflow_study_run()
+
+        assert run_id == "existing-run"
+        assert experiment_id == "123"
+        mock_client.create_run.assert_not_called()
 
     def test_build_trial_overrides_adds_parent_run_id_for_train(self):
         """Trial overrides should include parent run metadata used by train.py."""
